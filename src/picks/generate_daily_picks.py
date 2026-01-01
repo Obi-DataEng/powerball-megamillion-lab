@@ -1,7 +1,7 @@
-from pathlib import path
+from pathlib import Path
 import json
 
-out_dir = path("data/generated")
+out_dir = Path("data/generated")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 out_path = out_dir / f"daily_picks_{today}.json"
