@@ -12,8 +12,10 @@ def load_json(path: Path):
     return json.loads(path.read_text())
 
 def build_email_body():
-    today = datetime.utcnow().date().isoformat()
-    yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+    from datetime import datetime, timedelta, UTC
+
+    today = datetime.now(UTC).date().isoformat()
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
     picks = load_json(Path(f"data/generated/daily_picks_{today}.json"))
     evaluation = load_json(Path(f"reports/daily/report_{yesterday}.json"))
@@ -21,26 +23,40 @@ def build_email_body():
     lines = []
     lines.append(f"🎯 Daily Lottery Picks ({today})\n")
 
-    if picks:
+    if picks and picks.get("lines"):
         for line in picks["lines"]:
-            lines.append(
-                f"{line['game'].upper()}: "
-                f"{', '.join(map(str, line['white_balls']))} + {line['bonus_ball']}"
+            game = (line.get("game") or "game").upper()
+
+            # Accept multiple possible field names
+            whites = (
+                line.get("white_balls")
+                or line.get("white_numbers")
+                or line.get("numbers")
+                or []
             )
+
+            bonus = (
+                line.get("bonus_ball")
+                or line.get("powerball")
+                or line.get("mega_ball")
+                or line.get("bonus")
+                or "?"
+            )
+
+            lines.append(f"{game}: {', '.join(map(str, whites))} + {bonus}")
     else:
         lines.append("No picks generated today.")
 
     lines.append("\n📊 Yesterday's Results\n")
 
     if evaluation:
-        lines.append(
-            f"Wins: {evaluation['total_wins']}\n"
-            f"Estimated payout: ${evaluation['estimated_payout']}"
-        )
+        lines.append(f"Wins: {evaluation.get('total_wins', 0)}")
+        lines.append(f"Estimated payout: ${evaluation.get('estimated_payout', 0)}")
     else:
         lines.append("No evaluation available.")
 
     return "\n".join(lines)
+
 
 def send_email(body: str):
     host = os.environ["EMAIL_HOST"]
