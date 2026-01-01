@@ -38,14 +38,25 @@ jobs:
         run: |
           python src/evaluation/evaluate_yesterday.py || true
 
-      - name: Send daily SMS
+      - name: Send daily email
         env:
-          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-          TWILIO_TO_NUMBER: ${{ secrets.TWILIO_TO_NUMBER }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          python src/notify/send_daily_sms.py
+          python src/notify/send_daily_email.py
+
+
+      # - name: Send daily SMS
+      #   env:
+      #     TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      #     TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+      #     TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+      #     TWILIO_TO_NUMBER: ${{ secrets.TWILIO_TO_NUMBER }}
+      #   run: |
+      #     python src/notify/send_daily_sms.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
