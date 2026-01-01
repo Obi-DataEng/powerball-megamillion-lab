@@ -1,0 +1,48 @@
+name: Daily Lottery Picks + Evaluation
+
+on:
+  schedule:
+    - cron: "15 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ingest latest draws
+        run: |
+          python src/ingest/powerball_ingest.py
+          python src/ingest/megamillions_ingest.py
+
+      - name: Generate today's picks
+        run: |
+          python src/picks/generate_daily_picks.py
+
+      - name: Evaluate yesterday (if picks exist)
+        run: |
+          python src/evaluation/evaluate_yesterday.py || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily_outputs
+          path: |
+            data/generated/*.json
+            reports/daily/*.json
+          if-no-files-found: warn
