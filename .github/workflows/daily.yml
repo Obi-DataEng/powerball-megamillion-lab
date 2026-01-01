@@ -43,6 +43,6 @@ jobs:
         with:
           name: daily_outputs
           path: |
-            data/generated/*.json
-            reports/daily/*.json
+            data/**/*.json
+            reports/**/*.json
           if-no-files-found: warn
