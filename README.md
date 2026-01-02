@@ -2,17 +2,17 @@
 
 This project began with a simple but compelling question:
 
-__Is it possible to “beat” the lottery using data?__
+- __Is it possible to “beat” the lottery using data?__
 
 Specifically, I wanted to explore whether Powerball and Mega Millions drawing outcomes exhibit any detectable patterns, biases, or statistical tendencies that could influence number selection, even in systems designed to be random.
 
 While lottery systems are theoretically random, real-world randomness often invites deeper questions:
 
-__Are certain numbers drawn more frequently over long periods?__
+- __Are certain numbers drawn more frequently over long periods?__
 
-__Do number combinations cluster in observable ways?__
+- __Do number combinations cluster in observable ways?__
 
-__Are there psychological or structural biases (e.g., number ranges, human selection habits) that influence outcomes or perceived randomness?__
+- __Are there psychological or structural biases (e.g., number ranges, human selection habits) that influence outcomes or perceived randomness?__
 
 This curiosity led to the analytical phase of the project.
 
@@ -24,11 +24,11 @@ Historical Powerball and Mega Millions draw data was collected
 
 Frequency distributions were analyzed for:
 
-White balls
+- White balls
 
-Bonus balls (Powerball / Mega Ball)
+- Bonus balls (Powerball / Mega Ball)
 
-Long-term trends and draw counts were explored
+- Long-term trends and draw counts were explored
 
 Randomness was evaluated not to “prove predictability,” but to validate or challenge assumptions about true randomness
 
@@ -44,7 +44,7 @@ After understanding the statistical landscape, the project evolved into somethin
 
 Instead of a one-time analysis, I asked:
 
-__What if this analysis powered a system that runs every day, reacts to the calendar, and delivers results automatically?__
+- __What if this analysis powered a system that runs every day, reacts to the calendar, and delivers results automatically?__
 
 That shift led to the automation phase.
 
