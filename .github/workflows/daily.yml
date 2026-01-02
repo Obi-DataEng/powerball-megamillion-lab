@@ -40,11 +40,12 @@ jobs:
 
       - name: Send daily email
         env:
-          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
-          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
-          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.EMAIL_HOST }}
+          SMTP_PORT: ${{ secrets.EMAIL_PORT }}
+          SMTP_USER: ${{ secrets.EMAIL_USERNAME }}
+          SMTP_PASS: ${{ secrets.EMAIL_PASSWORD }}
+          TO_EMAIL: ${{ secrets.EMAIL_TO }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
         run: |
           python src/notify/send_daily_email.py
 
