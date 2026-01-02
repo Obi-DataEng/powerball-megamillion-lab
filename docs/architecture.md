@@ -1,3 +1,4 @@
+```mermaid
 flowchart TD
   A[GitHub Actions: Cron or Manual Dispatch] --> B[Runner: Setup Python + Dependencies]
 
@@ -21,3 +22,4 @@ flowchart TD
 
   H --> I[Send Email via SMTP]
   H --> J[Upload Outputs as GitHub Artifact]
+  ```
