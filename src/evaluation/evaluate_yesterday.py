@@ -1,307 +1,134 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, date
 import json
-from typing import Any, Dict, List, Optional, Tuple
 
 
-# -----------------------------
-# Paths
-# -----------------------------
-GEN_DIR = Path("data/generated")
-RAW_DIR = Path("data/raw")
-REPORT_DIR = Path("reports/daily")
-REPORT_DIR.mkdir(parents=True, exist_ok=True)
+POWERBALL_DRAW_DAYS = {0, 2, 5}      # Mon, Wed, Sat
+MEGAMILLIONS_DRAW_DAYS = {1, 4}     # Tue, Fri
 
 
-# -----------------------------
-# Prize tables (base prizes, no multipliers)
-# Amounts are in USD.
-# Keys are (white_matches, bonus_match_bool)
-# -----------------------------
-
-POWERBALL_PRIZES = {
-    (5, True): "JACKPOT",
-    (5, False): 1_000_000,
-    (4, True): 50_000,
-    (4, False): 100,
-    (3, True): 100,
-    (3, False): 7,
-    (2, True): 7,
-    (1, True): 4,
-    (0, True): 4,
-}
-
-MEGAMILLIONS_PRIZES = {
-    (5, True): "JACKPOT",
-    (5, False): 1_000_000,
-    (4, True): 10_000,
-    (4, False): 500,
-    (3, True): 200,
-    (3, False): 10,
-    (2, True): 10,
-    (1, True): 4,
-    (0, True): 2,
-}
-
-
-# -----------------------------
-# Utilities
-# -----------------------------
-
-def iso_yesterday_utc() -> str:
-    """Yesterday's date in UTC as YYYY-MM-DD."""
-    y = (datetime.utcnow().date() - timedelta(days=1))
-    return y.isoformat()
-
-
-def parse_date_any(s: str) -> Optional[date]:
-    """
-    Parse draw_date formats we might see:
-    - '2025-12-23T00:00:00.000'
-    - '2025-12-23'
-    """
-    if not s:
-        return None
-    try:
-        # Handles ISO timestamps like 2025-12-23T00:00:00.000
-        return datetime.fromisoformat(s.replace("Z", "")).date()
-    except ValueError:
-        try:
-            return datetime.strptime(s[:10], "%Y-%m-%d").date()
-        except Exception:
-            return None
-
-
-def normalize_whites(value: Any) -> List[int]:
-    """
-    Accepts whites as:
-    - list[int] (already parsed)
-    - '1 2 3 4 5' (space-separated)
-    - '01 02 03 04 05' etc.
-    """
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [int(x) for x in value]
-    if isinstance(value, str):
-        parts = value.replace(",", " ").split()
-        return [int(p) for p in parts if p.strip().isdigit()]
-    return []
-
-
-def normalize_bonus(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except Exception:
-        return None
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def find_draw_for_date(draws: List[Dict[str, Any]], target: date) -> Optional[Dict[str, Any]]:
-    """
-    Your ingestion outputs are already canonical, but we keep this flexible.
-    We look for a record whose draw_date matches target date.
-    """
-    for r in draws:
-        d = parse_date_any(str(r.get("draw_date", "")))
-        if d == target:
-            return r
+def game_for_weekday(wd: int) -> str | None:
+    if wd in POWERBALL_DRAW_DAYS:
+        return "powerball"
+    if wd in MEGAMILLIONS_DRAW_DAYS:
+        return "megamillions"
     return None
 
 
-def score_line(
-    picked_whites: List[int],
-    picked_bonus: int,
-    win_whites: List[int],
-    win_bonus: int,
-) -> Tuple[int, bool]:
-    white_matches = len(set(picked_whites) & set(win_whites))
-    bonus_match = (picked_bonus == win_bonus)
-    return white_matches, bonus_match
+def read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def prize_for(game: str, white_matches: int, bonus_match: bool):
-    if game == "powerball":
-        return POWERBALL_PRIZES.get((white_matches, bonus_match), 0)
-    if game == "megamillions":
-        return MEGAMILLIONS_PRIZES.get((white_matches, bonus_match), 0)
-    return 0
+def latest_draw_for_date(raw_draws: list[dict], iso_date: str) -> dict | None:
+    """
+    Finds the draw record matching date (YYYY-MM-DD) in your raw canonical JSON.
+    Handles Powerball ISO timestamps and MegaMillions date strings.
+    """
+    for d in raw_draws:
+        # powerball draw_date looks like "2025-12-24T00:00:00.000"
+        # megamillions draw_date looks like "2006-10-17"
+        draw_date = str(d.get("draw_date", ""))
+        if draw_date.startswith(iso_date):
+            return d
+    return None
 
 
-def dollars(prize) -> int:
-    return 0 if prize == "JACKPOT" else int(prize)
+def score_line(white: list[int], bonus: int, winning_white: list[int], winning_bonus: int) -> dict:
+    match_white = len(set(white) & set(winning_white))
+    match_bonus = int(bonus == winning_bonus)
+    return {"match_white": match_white, "match_bonus": match_bonus}
 
-
-# -----------------------------
-# Main evaluation
-# -----------------------------
 
 def main() -> None:
-    yesterday_iso = iso_yesterday_utc()
-    yesterday_dt = datetime.strptime(yesterday_iso, "%Y-%m-%d").date()
+    now = datetime.now(timezone.utc)
+    yesterday = (now.date() - timedelta(days=1))
+    yday = yesterday.isoformat()
 
-    picks_path = GEN_DIR / f"daily_picks_{yesterday_iso}.json"
+    yday_game = game_for_weekday(yesterday.weekday())
+    reports_dir = Path("reports/daily")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    if yday_game is None:
+        out = {
+            "run_date": now.date().isoformat(),
+            "yesterday_date": yday,
+            "yesterday_game": None,
+            "message": "No draw yesterday.",
+        }
+        out_path = reports_dir / f"evaluation_{yday}.json"
+        out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        print(f"[evaluate] {out['message']} Wrote -> {out_path}")
+        return
+
+    picks_path = Path("data/generated") / f"daily_picks_{yday}.json"
     if not picks_path.exists():
-        print(f"[evaluate] No picks found for {yesterday_iso} at {picks_path}. Skipping.")
-        return
-
-    # Load picks payload
-    picks_payload = load_json(picks_path)
-    lines = picks_payload.get("lines", [])
-    if not isinstance(lines, list) or not lines:
-        print(f"[evaluate] Picks file exists but contains no lines. Skipping.")
-        return
-
-    # Load draws
-    pb_path = RAW_DIR / "powerball_draws.json"
-    mm_path = RAW_DIR / "megamillions_draws.json"
-
-    if not pb_path.exists() or not mm_path.exists():
-        print("[evaluate] Missing draw files in data/raw. Run ingestion first. Skipping.")
-        return
-
-    pb_draws = load_json(pb_path)
-    mm_draws = load_json(mm_path)
-
-    # Find yesterday’s draw records
-    pb_draw = find_draw_for_date(pb_draws, yesterday_dt) if isinstance(pb_draws, list) else None
-    mm_draw = find_draw_for_date(mm_draws, yesterday_dt) if isinstance(mm_draws, list) else None
-
-    # If one game didn't draw yesterday (or data not present), we still evaluate what we can.
-    winning: Dict[str, Any] = {}
-
-    if pb_draw:
-        winning["powerball"] = {
-            "draw_date": str(pb_draw.get("draw_date")),
-            "white_numbers": normalize_whites(pb_draw.get("white_numbers")),
-            "bonus_ball": normalize_bonus(pb_draw.get("bonus_ball")),
+        out = {
+            "run_date": now.date().isoformat(),
+            "yesterday_date": yday,
+            "yesterday_game": yday_game,
+            "message": f"No picks file found for {yday}.",
         }
-
-    if mm_draw:
-        winning["megamillions"] = {
-            "draw_date": str(mm_draw.get("draw_date")),
-            "white_numbers": normalize_whites(mm_draw.get("white_numbers")),
-            "bonus_ball": normalize_bonus(mm_draw.get("bonus_ball")),
-        }
-
-    if not winning:
-        print(f"[evaluate] No matching draws found for {yesterday_iso}. Skipping.")
+        out_path = reports_dir / f"evaluation_{yday}.json"
+        out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        print(f"[evaluate] {out['message']} Wrote -> {out_path}")
         return
 
-    # Evaluate lines
-    evaluated: List[Dict[str, Any]] = []
-    totals = {
-        "total_lines": 0,
-        "powerball_lines": 0,
-        "megamillions_lines": 0,
-        "winning_lines": 0,
-        "jackpot_hits": 0,
-        "total_estimated_winnings": 0,
-    }
+    picks_payload = read_json(picks_path)
+    game_lines = picks_payload["picks"][yday_game]
 
-    best = {
-        "prize": 0,
-        "prize_label": "$0",
-        "line": None,
-    }
+    # Load canonical raw draws
+    raw_path = Path("data/raw") / ("powerball_draws.json" if yday_game == "powerball" else "megamillions_draws.json")
+    raw_draws = read_json(raw_path)
+    draw = latest_draw_for_date(raw_draws, yday)
 
-    for i, line in enumerate(lines, start=1):
-        game = line.get("game")
-        if game not in ("powerball", "megamillions"):
-            continue
-
-        # If we don't have winning numbers for that game/date, skip evaluation for that line
-        if game not in winning:
-            continue
-
-        picked_whites = normalize_whites(line.get("white_numbers"))
-        picked_bonus = normalize_bonus(line.get("bonus_ball"))
-        if picked_bonus is None:
-            continue
-
-        win_whites = winning[game]["white_numbers"]
-        win_bonus = winning[game]["bonus_ball"]
-        if win_bonus is None:
-            continue
-
-        white_matches, bonus_match = score_line(picked_whites, picked_bonus, win_whites, win_bonus)
-        prize = prize_for(game, white_matches, bonus_match)
-
-        is_winner = (prize != 0)
-        is_jackpot = (prize == "JACKPOT")
-
-        prize_label = "JACKPOT" if is_jackpot else f"${int(prize):,}"
-
-        evaluated_line = {
-            "line_id": i,
-            "game": game,
-            "picked_white_numbers": picked_whites,
-            "picked_bonus_ball": picked_bonus,
-            "winning_white_numbers": win_whites,
-            "winning_bonus_ball": win_bonus,
-            "white_matches": white_matches,
-            "bonus_match": bool(bonus_match),
-            "prize": prize,
-            "prize_label": prize_label,
-            "strategy": line.get("strategy", "unknown"),
+    if draw is None:
+        out = {
+            "run_date": now.date().isoformat(),
+            "yesterday_date": yday,
+            "yesterday_game": yday_game,
+            "message": f"No draw record found yet for {yday}. (Maybe data source not updated.)",
         }
-        evaluated.append(evaluated_line)
+        out_path = reports_dir / f"evaluation_{yday}.json"
+        out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        print(f"[evaluate] {out['message']} Wrote -> {out_path}")
+        return
 
-        # Totals
-        totals["total_lines"] += 1
-        if game == "powerball":
-            totals["powerball_lines"] += 1
-        else:
-            totals["megamillions_lines"] += 1
+    winning_white = draw["white_numbers"]
+    winning_bonus = draw["bonus_ball"]
 
-        if is_winner:
-            totals["winning_lines"] += 1
-        if is_jackpot:
-            totals["jackpot_hits"] += 1
+    line_scores = []
+    best = None
+    for idx, line in enumerate(game_lines, start=1):
+        s = score_line(line["white_balls"], line["bonus_ball"], winning_white, winning_bonus)
+        row = {
+            "line": idx,
+            "white_balls": line["white_balls"],
+            "bonus_ball": line["bonus_ball"],
+            **s,
+        }
+        line_scores.append(row)
+        # pick "best" as highest white matches, then bonus
+        key = (row["match_white"], row["match_bonus"])
+        if best is None or key > (best["match_white"], best["match_bonus"]):
+            best = row
 
-        totals["total_estimated_winnings"] += dollars(prize)
-
-        # Best line
-        best_value = float("inf") if is_jackpot else dollars(prize)
-        current_best = float("inf") if best["prize_label"] == "JACKPOT" else int(best["prize"])
-        if best["line"] is None or best_value > current_best:
-            best["prize"] = 0 if is_jackpot else dollars(prize)
-            best["prize_label"] = "JACKPOT" if is_jackpot else f"${dollars(prize):,}"
-            best["line"] = evaluated_line
-
-    # Build report
-    report: Dict[str, Any] = {
-        "evaluated_for_date": yesterday_iso,
-        "evaluated_at": datetime.utcnow().isoformat() + "Z",
-        "picks_source": str(picks_path),
-        "winning_draws_used": winning,
-        "totals": {
-            **totals,
-            "total_estimated_winnings_label": f"${totals['total_estimated_winnings']:,}",
+    out = {
+        "run_date": now.date().isoformat(),
+        "yesterday_date": yday,
+        "yesterday_game": yday_game,
+        "winning": {
+            "white_numbers": winning_white,
+            "bonus_ball": winning_bonus,
         },
+        "results": line_scores,
         "best_line": best,
-        "lines": evaluated,
-        "notes": [
-            "Prizes are estimated using base prize tiers (no Power Play / Megaplier).",
-            "If a draw for a game/date wasn't found, lines for that game are skipped.",
-        ],
     }
 
-    out_path = REPORT_DIR / f"report_{yesterday_iso}.json"
-    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-
-    print(f"[evaluate] Evaluated date: {yesterday_iso}")
-    print(f"[evaluate] Total lines scored: {totals['total_lines']}")
-    print(f"[evaluate] Winning lines: {totals['winning_lines']}")
-    print(f"[evaluate] Total estimated winnings: ${totals['total_estimated_winnings']:,}")
-    print(f"[evaluate] Saved report -> {out_path}")
+    out_path = reports_dir / f"evaluation_{yday}.json"
+    out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    print(f"[evaluate] Wrote -> {out_path}")
 
 
 if __name__ == "__main__":

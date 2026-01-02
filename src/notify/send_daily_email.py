@@ -1,87 +1,135 @@
-import os
+from __future__ import annotations
+
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 import json
+import os
 import smtplib
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from pathlib import Path
-from datetime import datetime, timedelta
 
-def load_json(path: Path):
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())
 
-def build_email_body():
-    from datetime import datetime, timedelta, UTC
+POWERBALL_DRAW_DAYS = {0, 2, 5}
+MEGAMILLIONS_DRAW_DAYS = {1, 4}
 
-    today = datetime.now(UTC).date().isoformat()
-    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
-    picks = load_json(Path(f"data/generated/daily_picks_{today}.json"))
-    evaluation = load_json(Path(f"reports/daily/report_{yesterday}.json"))
+def game_for_weekday(wd: int) -> str | None:
+    if wd in POWERBALL_DRAW_DAYS:
+        return "powerball"
+    if wd in MEGAMILLIONS_DRAW_DAYS:
+        return "megamillions"
+    return None
 
-    lines = []
-    lines.append(f"🎯 Daily Lottery Picks ({today})\n")
 
-    if picks and picks.get("lines"):
-        for line in picks["lines"]:
-            game = (line.get("game") or "game").upper()
+def read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
-            # Accept multiple possible field names
-            whites = (
-                line.get("white_balls")
-                or line.get("white_numbers")
-                or line.get("numbers")
-                or []
-            )
 
-            bonus = (
-                line.get("bonus_ball")
-                or line.get("powerball")
-                or line.get("mega_ball")
-                or line.get("bonus")
-                or "?"
-            )
+def format_lines(game: str, lines: list[dict]) -> str:
+    label = "POWERBALL" if game == "powerball" else "MEGAMILLIONS"
+    out = []
+    for line in lines:
+        out.append(f"{label}: {', '.join(map(str, line['white_balls']))} + {line['bonus_ball']}")
+    return "\n".join(out)
 
-            lines.append(f"{game}: {', '.join(map(str, whites))} + {bonus}")
+
+def build_email_html(today_iso: str) -> str:
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    today_game = game_for_weekday(today.weekday())
+    yday_game = game_for_weekday(yesterday.weekday())
+
+    # Load today's picks (always exists with Approach A)
+    picks_path = Path("data/generated") / f"daily_picks_{today_iso}.json"
+    picks = read_json(picks_path)
+
+    tonight_section = ""
+    if today_game is None:
+        tonight_section = "<p><b>No draw today.</b> (Powerball draws Mon/Wed/Sat. Mega Millions draws Tue/Fri.)</p>"
     else:
-        lines.append("No picks generated today.")
+        lines = picks["picks"][today_game]
+        tonight_text = format_lines(today_game, lines).replace("\n", "<br>")
+        tonight_section = f"""
+        <h3>🎯 Tonight’s Picks ({today_game.title()})</h3>
+        <div class="card">{tonight_text}</div>
+        """
 
-    lines.append("\n📊 Yesterday's Results\n")
-
-    if evaluation:
-        lines.append(f"Wins: {evaluation.get('total_wins', 0)}")
-        lines.append(f"Estimated payout: ${evaluation.get('estimated_payout', 0)}")
+    # Load yesterday evaluation if it exists
+    eval_path = Path("reports/daily") / f"evaluation_{yesterday.isoformat()}.json"
+    yday_section = ""
+    if yday_game is None:
+        yday_section = "<p><b>No draw yesterday.</b></p>"
+    elif not eval_path.exists():
+        yday_section = "<p><b>Yesterday’s results not available yet.</b></p>"
     else:
-        lines.append("No evaluation available.")
+        ev = read_json(eval_path)
+        if "winning" not in ev:
+            yday_section = f"<p><b>{ev.get('message','Yesterday’s results not available.')}</b></p>"
+        else:
+            win = ev["winning"]
+            best = ev["best_line"]
+            yday_section = f"""
+            <h3>📊 Yesterday’s Results ({yday_game.title()})</h3>
+            <div class="card">
+              <p><b>Winning:</b> {', '.join(map(str, win['white_numbers']))} + {win['bonus_ball']}</p>
+              <p><b>Best Line:</b> {', '.join(map(str, best['white_balls']))} + {best['bonus_ball']}
+              — matches: {best['match_white']} whites, bonus: {best['match_bonus']}</p>
+            </div>
+            """
 
-    return "\n".join(lines)
+    return f"""
+    <html>
+      <head>
+        <style>
+          body {{ font-family: Arial, sans-serif; line-height: 1.4; }}
+          .container {{ max-width: 680px; margin: 0 auto; padding: 16px; }}
+          .card {{ background: #f7f7f8; border: 1px solid #e6e6e9; border-radius: 12px; padding: 12px; }}
+          h2 {{ margin: 0 0 10px; }}
+          h3 {{ margin: 18px 0 8px; }}
+          .muted {{ color: #6b7280; font-size: 12px; margin-top: 14px; }}
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h2>🎯 Daily Lottery Report ({today_iso})</h2>
+          {tonight_section}
+          {yday_section}
+          <div class="muted">
+            Generated by GitHub Actions • Times shown in UTC
+          </div>
+        </div>
+      </body>
+    </html>
+    """
 
 
-def send_email(body: str):
-    host = os.environ["EMAIL_HOST"]
-    port = int(os.environ["EMAIL_PORT"])
-    user = os.environ["EMAIL_USERNAME"]
-    password = os.environ["EMAIL_PASSWORD"]
-    to_email = os.environ["EMAIL_TO"]
+def send_email(subject: str, html_body: str) -> None:
+    smtp_host = os.environ["SMTP_HOST"]
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ["SMTP_USER"]
+    smtp_pass = os.environ["SMTP_PASS"]
+    to_email = os.environ["TO_EMAIL"]
+    from_email = os.environ.get("FROM_EMAIL", smtp_user)
 
-    msg = MIMEMultipart()
-    msg["From"] = user
+    msg = MIMEText(html_body, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = from_email
     msg["To"] = to_email
-    msg["Subject"] = "🎰 Daily Lottery Picks + Results"
 
-    msg.attach(MIMEText(body, "plain"))
-
-    with smtplib.SMTP(host, port) as server:
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
         server.starttls()
-        server.login(user, password)
-        server.send_message(msg)
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(from_email, [to_email], msg.as_string())
 
-    print("Email sent successfully.")
 
-def main():
-    body = build_email_body()
-    send_email(body)
+def main() -> None:
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    subject = f"Daily Lottery Report ({today_iso})"
+    html = build_email_html(today_iso)
+    send_email(subject, html)
+    print("Email sent.")
+
 
 if __name__ == "__main__":
     main()
